@@ -1,0 +1,26 @@
+{
+    "activeVersion": {
+        "active": "17.5.391",
+        "versions": {
+            "17.5.391": {
+                "addons": {
+                    "kombi": {
+                        "options": {
+                            "enabled": true
+                        }
+                    }
+                }
+            },
+            "16.4.200": {
+                "addons": {
+                    "kombi": {
+                        "options": {
+                            "enabled": false
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "kombi": "1.0.0"
+}

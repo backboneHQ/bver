@@ -1,0 +1,22 @@
+{
+  "c": "1.0.0",
+  "d": "1.1.0",
+  "e": {
+    "version": "1.2.5",
+    "addons": {
+      "c": {
+        "options": {
+          "enabled": true
+        }
+      },
+      "d": {
+        "options": {
+          "enabled": false
+        }
+      }
+    },
+    "options": {
+      "foo": 10
+    }
+  }
+}

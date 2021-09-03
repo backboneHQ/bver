@@ -1,0 +1,74 @@
+#!/bin/bash
+
+#                  _
+#                /   \
+#               |  o  |
+#                \   /
+#         ________) (________
+#        |                   |
+#        '------.     .------'
+#                |   |
+#                |   |
+#     /\         |   |         /\
+#    /_ \        /   \        / _\
+#      \ '.    .'     '.    .' /
+#       \  '--'         '--'  /
+#        '.                 .'
+#          '._           _.'
+#             `'-.   .-'`
+#                 \ /
+#                  `
+# Defines the active versions of apps, plugins (etc) as environment variables that are
+# later used by wrappers inside blauncher. The variables get defined by the convention
+# $BVER_<NAME>_VERSION. They are declared using json files which can be localized
+# under the "../versions" folder (the json structure is basically an one dimension object).
+# Any json file created under ../versions is going to be used automatically.
+
+# getting current script folder
+dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# avoiding to prepended to the system path for every single bash session by making
+# sure bin is not included to the path yet.
+bverBinPath="$dir/bin"
+if ! [[ "$BVER_BIN_PATH" == "$bverBinPath" && "$PATH" == "$bverBinPath:$PATH" ]]; then
+  export BVER_BIN_PATH=$bverBinPath
+  export PATH="$bverBinPath:$PATH"
+
+  # prepending bver module to the python path
+  bverLib="$dir/lib"
+  if [ -z "$PYTHONPATH" ]; then
+    export PYTHONPATH="$bverLib"
+  else
+    export PYTHONPATH="$bverLib:$PYTHONPATH"
+  fi
+fi
+
+# making sure $BVER_CONFIG_ROOT is defined properly
+if ! [ -d "$BVER_CONFIG_ROOT" ]; then
+  echo "bver error: Could not find directory defined by \$BVER_CONFIG_ROOT" >&2
+else
+  bverConfigPath=" $(echo "$BVER_CONFIG_PATH" | tr ":" "\n" | tac):$BVER_CONFIG_ROOT"
+
+  # setting environment variables
+  while IFS='=' read -r name version || [[ -n "$name" ]];
+  do
+    # in case BVER_INIT_MODE is set to "DONT_OVERRIDE" we don't override any version
+    # already defined under the environment. Also, if the current environment
+    # has already the version we are trying to set we skip them
+    if [[ "$BVER_INIT_MODE" == "DONT_OVERRIDE" && -n "${!name}" || "${!name}" == "$version" ]]; then
+      continue
+    fi
+
+    # verbose mode
+    if [[ -n "$BVER_VERBOSE" ]]; then
+      if [ -z "${!name}" ]; then
+	echo -e "$name=$version \e[32m(SETTING)\e[0m"
+      else
+	echo -e "$name=$version \e[33m(OVERRIDING FROM ${!name})\e[0m"
+      fi
+    fi
+
+    # convention followed by <BVER_NAME_VERSION>=<VERSION>
+    export "$name"=$version
+  done < <(bvervars $(echo "$bverConfigPath" | tr ":" " "))
+fi

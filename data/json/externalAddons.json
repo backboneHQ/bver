@@ -1,0 +1,20 @@
+{
+  "f": {
+    "version": "1.2.5",
+    "addons": {
+      "a": {
+        "options": {
+          "enabled": true
+        }
+      },
+      "c": {
+        "options": {
+          "enabled": false
+        }
+      }
+    },
+    "options": {
+      "foo": 10
+    }
+  }
+}
