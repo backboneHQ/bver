@@ -21,7 +21,6 @@ class Versioned(object):
     """
 
     __nameRegEx = re.compile('^[^\W]+$')
-    __versionRegEx = re.compile('^([^\W]|\.)+$')
 
     def __init__(self, name, version):
         """
@@ -104,7 +103,7 @@ class Versioned(object):
 
         @private
         """
-        if not (isinstance(version, basestring) and len(version) and self.__versionRegEx.match(version)):
+        if not (isinstance(version, basestring) and len(version)):
             raise InvalidVersionError(
                 'version needs to be defined as valid string "{0}"'.format(
                     version
