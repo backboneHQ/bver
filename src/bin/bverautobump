@@ -1,0 +1,299 @@
+#!/usr/bin/env python
+
+import os
+import json
+import time
+import datetime
+import argparse
+import subprocess
+from pathlib import Path
+
+class BverAutoBumpError(Exception):
+    """Bver auto bump base error."""
+
+class BverAutoBump:
+    """
+    Assigns versions for resources and bumps bver itself version automatically.
+
+    It expects a dict containing the resource name as key and the
+    resource version for the value. For instance:
+
+    {
+        "name": "0.1.0"
+    }
+    """
+
+    __basePublishDirectory = os.environ.get(
+        'BVER_AUTO_BUMP_BASE_PUBLISH_DIRECTORY',
+        os.path.join(
+            os.environ['BACKBONE_ROOT'],
+            'configs',
+            'bver',
+            'publish'
+        )
+    )
+
+    __bverInfoFilePath = os.path.join(
+        __basePublishDirectory,
+        'info.json',
+    )
+
+    __versionsBasePath = os.path.join(
+        __basePublishDirectory,
+        'src',
+        'versions'
+    )
+
+    __uncategorizedFilePath = os.path.join(
+        __versionsBasePath,
+        'uncategorized.json'
+    )
+
+    def __init__(self, versionsData, applyModifications=True, runRelease=True, activateVersion=True, dev=False):
+        """
+        Create BverAutoBump object.
+        """
+        self.lock()
+
+        try:
+            if applyModifications:
+                self.__assignResourceVersions(versionsData, activateVersion, dev)
+            if runRelease and not dev:
+                self.__bumpBver()
+        except Exception as err:
+            raise err
+        else:
+            if runRelease:
+                self.__installBver(dev)
+        finally:
+            self.unlock()
+
+    def __assignResourceVersions(self, versionsData, activateVersion, dev):
+        """
+        Assign resource versions bver.
+        """
+        assert os.path.exists(self.__basePublishDirectory), \
+            "Could not access: {}".format(self.__basePublishDirectory)
+
+        assert os.path.exists(self.__versionsBasePath), \
+            "Could not access: {}".format(self.__versionsBasePath)
+
+        uncategorized = {}
+        changed = False
+        jsonVersionPaths=list(Path(self.__versionsBasePath).rglob('*.json'))
+        for autoBumpName, autoBumpVersion in versionsData.items():
+            found = False
+            for path in jsonVersionPaths:
+                with open(path.absolute()) as f:
+                    originalContents = json.load(f)
+
+                content = dict(originalContents)
+                for key, data in content.items():
+                    if autoBumpName != key:
+                        continue
+
+                    found = True
+                    if isinstance(data, str):
+                        if data == autoBumpVersion:
+                            break
+                        content[key] = autoBumpVersion
+                    else:
+                        activeVerion = data['active']
+                        if activeVerion == autoBumpVersion:
+                            break
+
+                        # in case the version we are trying to assign
+                        # does not exist then duplicating the active one
+                        # and assigning the new copy to the new version
+                        if autoBumpVersion not in content[key]['versions']:
+                            activeVersionData = dict(data['versions'][activeVerion])
+                            content[key]['versions'][autoBumpVersion] = activeVersionData
+
+                        if activateVersion:
+                            content[key]['active'] = autoBumpVersion
+
+                    changed = True
+                    with open(path.absolute(), 'w') as f:
+                        json.dump(content, f, indent=4, sort_keys=True)
+
+                if found:
+                    break
+
+            if not found:
+                uncategorized[autoBumpName] = autoBumpVersion
+
+        if uncategorized:
+            if os.path.exists(self.__uncategorizedFilePath):
+                with open(self.__uncategorizedFilePath) as f:
+                    for key, value in json.load(f).items():
+                        if key in uncategorized:
+                            continue
+                        uncategorized[key] = value
+
+            changed = True
+            with open(self.__uncategorizedFilePath, 'w') as f:
+                json.dump(uncategorized, f, indent=4, sort_keys=True)
+
+        if not changed and not dev:
+            raise BverAutoBumpError("No changes detected in relation to the active versions, aborting...")
+
+    def __bumpBver(self):
+        """
+        Bump bver itself version.
+        """
+        infoData = None
+        with open(self.__bverInfoFilePath) as f:
+            infoData = json.load(f)
+
+        verParts = infoData['version'].split('.')
+        if len(verParts) == 3 and verParts[2].isdigit():
+            verParts[2] = str(int(verParts[2]) + 1)
+
+            infoData['version'] = '.'.join(verParts)
+            with open(self.__bverInfoFilePath, 'w') as f:
+                json.dump(
+                    infoData,
+                    f,
+                    indent=4,
+                    sort_keys=True
+                )
+
+    @classmethod
+    def lock(cls):
+        """
+        Crete a lock to avoid race conditions when modifying bver.
+        """
+        lockFilePath = os.path.join(
+            cls.__basePublishDirectory,
+            'lock'
+        )
+
+        # checking for lock
+        while True:
+            time.sleep(1)
+            if os.path.exists(lockFilePath):
+                with open(lockFilePath) as f:
+                    print('Waiting Lock (Created by {} at {})'.format(
+                            f.read(),
+                            datetime.datetime.fromtimestamp(
+                                Path(lockFilePath).stat().st_ctime
+                            ).strftime('%Y-%m-%d %H:%M')
+                        )
+                    )
+            else:
+                break
+
+        # writing lock
+        with open(lockFilePath, 'w') as f:
+            f.write(os.environ['BACKBONE_USER'])
+
+    @classmethod
+    def unlock(cls):
+        """
+        Remove the lock created when modifying bver.
+        """
+        lockFilePath = os.path.join(
+            cls.__basePublishDirectory,
+            'lock'
+        )
+        if os.path.exists(lockFilePath):
+            os.remove(lockFilePath)
+
+    def __installBver(self, dev=False):
+        """
+        Deploy the newly modified bver.
+        """
+        # running binstall
+        env = dict(os.environ)
+        env['BVER_DEPLOYMENT_IGNORE_PROMPT'] = '1'
+
+        processArgs = [
+            env['BACKBONE_BASH_EXECUTABLE'].replace('\\', '/'),
+            '{}/binstall'.format(self.__basePublishDirectory.replace('\\', '/'))
+        ]
+
+        if not dev:
+            processArgs.append( '--production')
+
+        p = subprocess.Popen(
+            processArgs,
+            env=env,
+            cwd=self.__basePublishDirectory
+        )
+
+        p.wait()
+
+        if p.returncode:
+            raise Exception('Failed during bver installation.')
+
+
+# command help
+parser = argparse.ArgumentParser(
+    description=BverAutoBump.__doc__.split('.')[0]
+)
+
+parser.add_argument(
+    'versions',
+    metavar='P',
+    nargs='*',
+    help='a list of <RESOURCE_NAME>=<RESOURCE_VERSION> separated by space. For instance: foo=0.1.0 foo2=0.0.1'
+)
+
+parser.add_argument(
+    '--only-apply-modifications',
+    action='store_true',
+    help='when specified only apply the modifications (version changes) and avoid releasing a new version of bver.'
+)
+
+parser.add_argument(
+    '--only-include-version',
+    action='store_true',
+    help='when specified only includes the new version to the set of available versions (avoiding to set the version defined as active).'
+)
+
+parser.add_argument(
+    '--only-release',
+    action='store_true',
+    help='when specified only releases a new version of bver (useful when manually editing bver publish configs).'
+)
+
+parser.add_argument(
+    '--force-unlock',
+    action='store_true',
+    help='when specified forces releasing any lock. If this flag is enabled nothing else is done except from unlocking.'
+)
+
+parser.add_argument(
+    '--force-lock',
+    action='store_true',
+    help='when specified forces creating a lock (used when manually modifying bver publish configs). If this flag is enabled nothing else is done except from locking.'
+)
+
+parser.add_argument(
+    '--dev',
+    action='store_true',
+    help='when specified runs the "dev" release instead of the production one (default). Useful for testing changes before running the production release. When this option is specified. It only apply the modifications (without bumping the bver-config version)'
+)
+
+
+if __name__ == "__main__":
+    args = parser.parse_args()
+
+    versionsData = {}
+    for name, version in map(lambda x: x.split('='), args.versions):
+        if not version:
+            continue
+        versionsData[name.lower()] = version
+
+    if args.force_unlock:
+        BverAutoBump.unlock()
+    elif args.force_lock:
+        BverAutoBump.lock()
+    else:
+        BverAutoBump(
+            versionsData,
+            not args.only_release,
+            not args.only_apply_modifications,
+            not args.only_include_version,
+            args.dev
+        )
